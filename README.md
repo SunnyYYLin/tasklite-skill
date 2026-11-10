@@ -23,13 +23,10 @@ Run any script with `node` or `bun`, passing `--help` for complete options and `
 
 | Script | Description |
 | --- | --- |
-| `scripts/list.mjs` | Query and filter tasks with TaskLite DQL, path filters, and sorting |
-| `scripts/get.mjs` | Inspect a task (`--id` or `--path --line`) with ancestors, children, and blockers |
-| `scripts/create.mjs` | Create root tasks, nested subtasks, or `task: true` frontmatter tasks |
-| `scripts/edit.mjs` | Atomically update or clear metadata and date fields |
+| `scripts/list.mjs` | Query and filter tasks with TaskLite DQL, `--id`, path filters, and sorting |
+| `scripts/create.mjs` | Create root tasks, nested subtasks, or `task: true` frontmatter tasks (supports `--auto-id`) |
 | `scripts/status.mjs` | Change task status with cascade, parent propagation, recurrence, and auto-unblock |
 | `scripts/delete.mjs` | Delete a task subtree (or remove `task` frontmatter property for line `-1`) |
-| `scripts/meta.mjs` | List vault assignees, generate semantic IDs (`gen-id`), or inspect vault config (`info`) |
 
 ## Vault & Compatibility
 

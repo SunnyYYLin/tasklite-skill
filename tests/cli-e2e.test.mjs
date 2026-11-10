@@ -58,7 +58,7 @@ afterEach(async () => {
 });
 
 describe("CLI scripts end-to-end", () => {
-	test("meta info/assignees/gen-id respect Obsidian config, auto-detection, and exclusions", async () => {
+	test("list.mjs and create.mjs respect Obsidian config, auto-detection, exclusions, emoji mode, and ID collision", async () => {
 		const vault = await makeTempVault({
 			appJson: { useTab: false, tabSize: 2 },
 			pluginSettings: {
@@ -91,37 +91,33 @@ describe("CLI scripts end-to-end", () => {
 			"utf8",
 		);
 
-		// Auto-detect vault from nested subdirectory without --vault
-		const infoRes = await runScript("meta.mjs", ["info", "--json"], {
+		// Auto-detect vault from nested subdirectory without --vault + ensure excluded files are skipped
+		const listRes = await runScript("list.mjs", ["--json"], {
 			cwd: path.join(vault, "Projects"),
 		});
-		assert.equal(infoRes.code, 0, infoRes.stderr);
-		const info = JSON.parse(infoRes.stdout);
-		assert.equal(path.resolve(info.vault), path.resolve(vault));
-		assert.deepEqual(info.indentConfig, { useTab: false, tabSize: 2 });
-		assert.equal(info.settings.preferredTaskFormat, "emoji");
-
-		const assigneesRes = await runScript("meta.mjs", ["assignees", "--vault", vault, "--json"]);
-		assert.equal(assigneesRes.code, 0, assigneesRes.stderr);
-		const assigneesData = JSON.parse(assigneesRes.stdout);
-		assert.equal(assigneesData.defaultAssignee, "Sunny");
-		assert.deepEqual(assigneesData.assignees, ["Sunny", "Alice", "Bob", "Mary"]);
-
-		// Existing ID collision causes 4-char random suffix
-		const genRes = await runScript("meta.mjs", ["gen-id", "--vault", vault, "--desc", "Kick", "--json"]);
-		assert.equal(genRes.code, 0, genRes.stderr);
-		const genData = JSON.parse(genRes.stdout);
-		assert.match(genData.id, /^k-[a-z0-9]{4}$/);
-
-		// Ensure .obsidian, .agents, and tasks:ignore files are excluded
-		const listRes = await runScript("list.mjs", ["--vault", vault, "--json"]);
 		assert.equal(listRes.code, 0, listRes.stderr);
 		const listData = JSON.parse(listRes.stdout);
+		assert.equal(path.resolve(listData.vault), path.resolve(vault));
 		assert.equal(listData.total, 2);
 		assert.ok(listData.tasks.every((t) => t.path === "Projects/Active.md"));
+
+		// create --auto-id avoids collision with existing "k" ID and formats in emoji mode
+		const createdEmoji = await runScript("create.mjs", [
+			"--vault", vault,
+			"--path", "Projects/Active.md",
+			"--desc", "Kick",
+			"--auto-id",
+			"--assignee", "Sunny",
+			"--json",
+		]);
+		assert.equal(createdEmoji.code, 0, createdEmoji.stderr);
+		const createdJson = JSON.parse(createdEmoji.stdout).created;
+		assert.match(createdJson.id, /^k-[a-z0-9]{4}$/);
+		assert.match(createdJson.line, new RegExp(`🆔 ${createdJson.id}`));
+		assert.match(createdJson.line, /👤 Sunny/);
 	});
 
-	test("create, list, get, and edit work across line tasks, subtasks, and frontmatter tasks", async () => {
+	test("create.mjs and list.mjs handle root tasks, subtasks, frontmatter tasks, DQL, sorting, and --id lookup", async () => {
 		const vault = await makeTempVault({
 			appJson: { useTab: false, tabSize: 4 },
 			pluginSettings: { preferredTaskFormat: "dataview" },
@@ -190,19 +186,11 @@ describe("CLI scripts end-to-end", () => {
 		assert.match(epicRaw, /due: 2026-11-13/);
 		assert.match(epicRaw, /Project body text\./);
 
-		// get.mjs inspects parent, children, and ancestors
-		const getChild = await runScript("get.mjs", ["--vault", vault, "--id", "collect-metrics", "--json"]);
-		assert.equal(getChild.code, 0, getChild.stderr);
-		const childDetails = JSON.parse(getChild.stdout);
-		assert.equal(childDetails.ancestors.length, 1);
-		assert.equal(childDetails.ancestors[0].task.id, "xzb");
+		// list.mjs filters: --id, --root-only, --frontmatter-only, DQL, --sort, --limit
+		const byId = JSON.parse((await runScript("list.mjs", ["--vault", vault, "--id", "collect-metrics", "--json"])).stdout);
+		assert.equal(byId.total, 1);
+		assert.equal(byId.tasks[0].parentLine, 0);
 
-		const getParent = await runScript("get.mjs", ["--vault", vault, "--id", "xzb", "--json"]);
-		const parentDetails = JSON.parse(getParent.stdout);
-		assert.equal(parentDetails.children.length, 1);
-		assert.equal(parentDetails.children[0].task.id, "collect-metrics");
-
-		// list.mjs filters: root-only, frontmatter-only, sort, DQL
 		const rootOnly = JSON.parse((await runScript("list.mjs", ["--vault", vault, "--root-only", "--json"])).stdout);
 		assert.equal(rootOnly.total, 2);
 
@@ -210,25 +198,12 @@ describe("CLI scripts end-to-end", () => {
 		assert.equal(fmOnly.total, 1);
 		assert.equal(fmOnly.tasks[0].task.id, "ship-epic");
 
-		// edit.mjs updates fields & clears fields; rejects --status
-		const badEdit = await runScript("edit.mjs", ["--vault", vault, "--id", "xzb", "--status", "done", "--json"]);
-		assert.notEqual(badEdit.code, 0);
-
-		const editRes = await runScript("edit.mjs", [
-			"--vault", vault,
-			"--id", "xzb",
-			"--priority", "highest",
-			"--clear-location",
-			"--clear-due",
-			"--assignee", "Alice",
-			"--json",
-		]);
-		assert.equal(editRes.code, 0, editRes.stderr);
-		const edited = JSON.parse(editRes.stdout).updated;
-		assert.equal(edited.task.priority, "highest");
-		assert.equal(edited.task.location, null);
-		assert.equal(edited.task.dates.due, null);
-		assert.deepEqual(edited.task.assignee, ["Alice"]);
+		const dqlLimited = JSON.parse(
+			(await runScript("list.mjs", ["--vault", vault, "--query", 'person = "Sunny"', "--sort", "due", "--limit", "1", "--json"])).stdout,
+		);
+		assert.equal(dqlLimited.total, 2);
+		assert.equal(dqlLimited.count, 1);
+		assert.equal(dqlLimited.tasks[0].task.id, "xzb");
 	});
 
 	test("status.mjs handles dependencies, cross-file unblocking, cascade, frontmatter sync, recurrence, onCompletion delete, and CRLF+BOM", async () => {
@@ -277,6 +252,11 @@ describe("CLI scripts end-to-end", () => {
 		assert.deepEqual(doneRelJson.unblocked[0].removedDependencies, ["rel-notes"]);
 		assert.equal(doneRelJson.unblocked[0].dependsOn, "other-step");
 
+		// list.mjs --id finds DONE tasks cleanly too
+		const lookupDone = JSON.parse((await runScript("list.mjs", ["--vault", vault, "--id", "rel-notes", "--json"])).stdout);
+		assert.equal(lookupDone.total, 1);
+		assert.equal(lookupDone.tasks[0].task.status, "DONE");
+
 		const bAfter = await readFile(path.join(vault, "B.md"), "utf8");
 		assert.match(bAfter, /\[dependsOn:: other-step\]/);
 
@@ -301,7 +281,7 @@ describe("CLI scripts end-to-end", () => {
 		const aAfterDelete = await readFile(path.join(vault, "A.md"), "utf8");
 		assert.doesNotMatch(aAfterDelete, /Ephemeral ping/);
 
-		// Complete the newly created recurring occurrence with --to toggle? Let's test frontmatter sync in C.md!
+		// Frontmatter parent sync + toggle reopen in C.md
 		await writeFile(
 			path.join(vault, "C.md"),
 			[

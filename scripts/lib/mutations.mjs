@@ -1,7 +1,6 @@
 import { parseCliDateInput, resolveDueDateFromStart, todayString } from "./dates.mjs";
 import {
 	applyTaskStatus,
-	copyTaskData,
 	normalizePriority,
 	normalizeStatusInput,
 	parseTaskLine,
@@ -550,102 +549,6 @@ export async function createTask(ctx, input) {
 		id: taskId,
 		line: insertion,
 	};
-}
-
-export async function editTask(ctx, selector, patch) {
-	if ("status" in patch && patch.status !== undefined) {
-		throw new Error("editTask cannot change task status; use scripts/status.mjs instead.");
-	}
-	const target = await resolveTaskTarget(ctx, selector);
-	const fileInfo = resolveVaultFilePath(ctx.vaultRoot, target.path);
-	const doc = await readMarkdownFile(fileInfo.absPath);
-	const lines = [...doc.lines];
-	const { frontmatter } = parseFrontmatter(lines);
-	if (isIgnoredByFrontmatter(frontmatter)) {
-		throw new Error(`File "${target.path}" is ignored by frontmatter (tasks: ignore).`);
-	}
-
-	const tree = buildTaskTree(lines, ctx.registry);
-
-	if (target.lineNumber === -1) {
-		const fmRecord = parseFrontmatterTask(
-			{ path: fileInfo.vaultPath, basename: fileInfo.basename },
-			frontmatter,
-			ctx.registry,
-			tree.nodes.some((n) => Boolean(n.task)),
-		);
-		if (!fmRecord) throw new Error(`Frontmatter task not found in "${target.path}".`);
-
-		const data = copyTaskData(fmRecord.task);
-		applyPatchFields(data, patch);
-		const fmPatch = buildFrontmatterPatch(fmRecord.task, data, ctx.registry, fmRecord.rawStatus);
-		const nextContent = applyFrontmatterPatchToContent(doc.content, fmPatch);
-		await writeMarkdownFile(fileInfo.absPath, nextContent, doc);
-		return {
-			path: target.path,
-			lineNumber: -1,
-			task: data,
-		};
-	}
-
-	const node = tree.byLine.get(target.lineNumber);
-	if (!node?.task) {
-		throw new Error(`Task not found at "${target.path}" line ${target.lineNumber}.`);
-	}
-	const data = copyTaskData(node.task.data);
-	applyPatchFields(data, patch);
-
-	const depth = taskDepth(node);
-	const indent = getIndentPrefix(depth, ctx.indentConfig, lines);
-	const format = ctx.settings.preferredTaskFormat ?? "dataview";
-	const updatedLine = serializeTaskLine({ ...node.task, data }, indent, ctx.registry, format);
-	lines[target.lineNumber] = updatedLine;
-	await writeMarkdownFile(fileInfo.absPath, lines.join("\n"), doc);
-
-	return {
-		path: target.path,
-		lineNumber: target.lineNumber,
-		line: updatedLine,
-		task: data,
-	};
-}
-
-function applyPatchFields(data, patch) {
-	if (patch.description !== undefined) {
-		if (!String(patch.description).trim()) {
-			throw new TypeError("Description cannot be empty.");
-		}
-		data.description = String(patch.description).trim();
-	}
-	if (patch.priority !== undefined) data.priority = normalizePriority(patch.priority);
-	if (patch.recurrence !== undefined) data.recurrence = patch.recurrence ? String(patch.recurrence).trim() : null;
-	if (patch.onCompletion !== undefined) data.onCompletion = patch.onCompletion || null;
-	if (patch.id !== undefined) data.id = patch.id ? String(patch.id).trim() : null;
-	if (patch.dependsOn !== undefined) data.dependsOn = patch.dependsOn ? String(patch.dependsOn).trim() : null;
-	if (patch.assignee !== undefined) {
-		data.assignee = Array.isArray(patch.assignee)
-			? patch.assignee.map((a) => String(a).trim()).filter(Boolean)
-			: [];
-	}
-	if (patch.location !== undefined) data.location = patch.location ? String(patch.location).trim() : null;
-
-	if (patch.dates) {
-		const d = patch.dates;
-		if (d.start !== undefined) data.dates.start = d.start ? parseCliDateInput(d.start) : null;
-		if (d.scheduled !== undefined) data.dates.scheduled = d.scheduled ? parseCliDateInput(d.scheduled) : null;
-		if (d.due !== undefined) {
-			if (!d.due) {
-				data.dates.due = null;
-			} else {
-				const rawDue = parseCliDateInput(d.due, { allowTimeOnly: true });
-				data.dates.due = resolveDueDateFromStart(rawDue, data.dates.start) ?? rawDue;
-			}
-		}
-		if (d.remind !== undefined) data.dates.remind = d.remind ? parseCliDateInput(d.remind) : null;
-		if (d.done !== undefined) data.dates.done = d.done ? parseCliDateInput(d.done) : null;
-		if (d.cancelled !== undefined) data.dates.cancelled = d.cancelled ? parseCliDateInput(d.cancelled) : null;
-		if (d.created !== undefined) data.dates.created = d.created ? parseCliDateInput(d.created) : null;
-	}
 }
 
 export async function updateTaskStatus(ctx, selector, targetStatusInput, options = {}) {

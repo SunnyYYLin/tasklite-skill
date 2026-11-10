@@ -11,11 +11,12 @@ List and filter TaskLite tasks in an Obsidian vault.
 Options:
   --vault <dir>         Obsidian vault root (auto-detected if omitted)
   --query <dql>         TaskLite DQL query (e.g. 'is(open) AND due <= date(today)')
+  --id <taskId>         Filter by exact task ID (includes completed/cancelled unless --open-only)
   --path <prefix>       Limit to files matching vault-relative path prefix
   --completed           Include DONE tasks
   --cancelled           Include CANCELLED tasks
   --all                 Include DONE and CANCELLED tasks
-  --open-only           Exclude DONE and CANCELLED even if --query mentions them
+  --open-only           Exclude DONE and CANCELLED even if --query or --id is set
   --root-only           Exclude subtasks (default includes subtasks)
   --frontmatter-only    Only list file-level (task: true) tasks
   --sort <field>        Sort by: due | scheduled | priority | path (default: vault order)
@@ -60,11 +61,12 @@ runCli(
 	async ({ flags }) => {
 		const vaultRoot = resolveVaultRoot(flags.vault);
 		const ctx = await loadVaultContext(vaultRoot);
+		const targetId = flags.id !== undefined ? String(flags.id).trim() : null;
 		const query = flags.query;
 		const hints = flags["open-only"] ? { mentionsDone: false, mentionsCancelled: false } : detectQueryStatusHints(query);
 
-		const includeCompleted = Boolean(!flags["open-only"] && (flags.all || flags.completed || hints.mentionsDone));
-		const includeCancelled = Boolean(!flags["open-only"] && (flags.all || flags.cancelled || hints.mentionsCancelled));
+		const includeCompleted = Boolean(!flags["open-only"] && (flags.all || flags.completed || targetId || hints.mentionsDone));
+		const includeCancelled = Boolean(!flags["open-only"] && (flags.all || flags.cancelled || targetId || hints.mentionsCancelled));
 		const includeChildren = !flags["root-only"];
 
 		let records = await listVaultTasks(ctx, {
@@ -75,6 +77,10 @@ runCli(
 			pathPrefix: flags.path,
 			query,
 		});
+
+		if (targetId) {
+			records = records.filter((r) => r.task.id === targetId);
+		}
 
 		if (flags.sort) {
 			records = sortRecords(records, flags.sort);

@@ -1,7 +1,7 @@
 import { StatusRegistry } from "./format.mjs";
 import { isIgnoredByFrontmatter, parseFrontmatter, parseFrontmatterTask } from "./frontmatter.mjs";
 import { filterTaskRecordsByQuery } from "./query.mjs";
-import { getSubtreeNodes, getTaskParentLine, buildTaskTree, taskDepth } from "./tree.mjs";
+import { buildTaskTree, getTaskParentLine, taskDepth } from "./tree.mjs";
 import { listVaultMarkdownFiles, loadVaultConfig, readMarkdownFile, resolveVaultFilePath } from "./vault.mjs";
 
 export async function loadVaultContext(vaultRoot) {
@@ -156,71 +156,6 @@ export async function resolveTaskTarget(ctx, selector) {
 		);
 	}
 	return record;
-}
-
-export async function inspectTaskDetails(ctx, selector) {
-	const record = await resolveTaskTarget(ctx, selector);
-	const fileInfo = resolveVaultFilePath(ctx.vaultRoot, record.path);
-	const parsed = await parseDocumentRecords(
-		{ path: fileInfo.vaultPath, absPath: fileInfo.absPath, basename: fileInfo.basename },
-		ctx.registry,
-	);
-
-	const ancestors = [];
-	if (record.lineNumber === -1) {
-		// Top-level file task
-	} else {
-		let parentLine = record.parentLine;
-		while (parentLine !== null) {
-			const parentRecord = parsed.records.find((r) => r.lineNumber === parentLine);
-			if (!parentRecord) break;
-			ancestors.unshift(parentRecord);
-			parentLine = parentRecord.parentLine;
-		}
-	}
-
-	let subtree = [];
-	if (record.lineNumber === -1) {
-		subtree = parsed.records.filter((r) => r.lineNumber !== -1);
-	} else {
-		const node = parsed.tree?.byLine.get(record.lineNumber);
-		if (node) {
-			const subLines = new Set(getSubtreeNodes(node).map((n) => n.lineNumber).filter((l) => l !== record.lineNumber));
-			subtree = parsed.records.filter((r) => subLines.has(r.lineNumber));
-		}
-	}
-
-	let dependencies = [];
-	if (record.task.dependsOn) {
-		const depIds = record.task.dependsOn.split(",").map((s) => s.trim()).filter(Boolean);
-		if (depIds.length > 0) {
-			const all = await listVaultTasks(ctx, {
-				includeCompleted: true,
-				includeCancelled: true,
-				includeChildren: true,
-			});
-			dependencies = depIds.map((depId) => {
-				const found = all.find((r) => r.task.id === depId);
-				return {
-					id: depId,
-					found: Boolean(found),
-					status: found?.task.status ?? null,
-					satisfied: found ? (found.task.status === "DONE" || found.task.status === "CANCELLED") : true,
-					path: found?.path ?? null,
-					lineNumber: found?.lineNumber ?? null,
-					description: found?.task.description ?? null,
-				};
-			});
-		}
-	}
-
-	return {
-		task: record,
-		ancestors,
-		children: subtree,
-		dependencies,
-		unfinishedDependencies: dependencies.filter((d) => !d.satisfied).map((d) => d.id),
-	};
 }
 
 export async function getUnfinishedDependencies(ctx, dependsOn) {
